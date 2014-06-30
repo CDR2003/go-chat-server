@@ -38,7 +38,7 @@ func StartServer() {
 	}
 	defer socket.Close()
 
-	fmt.Println("Server started at :12345")
+	fmt.Println("Server started at :12345. Press Ctrl-C to stop.")
 
 	interruptChan := make(chan os.Signal)
 	signal.Notify(interruptChan, os.Interrupt)
