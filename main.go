@@ -5,15 +5,42 @@ import "fmt"
 import "net"
 import "os"
 import "os/signal"
+import "sync"
 
-func HandleConnection(room *server.Room, connection net.Conn) {
+func StartRead(connection net.Conn, ch chan []byte) {
 	buffer := make([]byte, 1024)
 	for {
 		count, err := connection.Read(buffer)
 		if err != nil {
+			ch <- nil
 			return
 		}
-		room.Broadcast(string(buffer[:count]))
+		ch <- buffer[:count]
+	}
+}
+
+func HandleConnection(room *server.Room, connection net.Conn, waitGroup *sync.WaitGroup, closeChan chan bool) {
+	defer waitGroup.Done()
+	defer connection.Close()
+
+	user := server.NewUser(connection)
+	defer user.Close()
+	room.AddMember(user)
+	defer room.RemoveMember(user)
+
+	ch := make(chan []byte)
+	go StartRead(connection, ch)
+
+	for {
+		select {
+		case data := <-ch:
+			if data == nil {
+				return
+			}
+			room.Broadcast(string(data))
+		case <-closeChan:
+			return
+		}
 	}
 }
 
@@ -46,15 +73,18 @@ func StartServer() {
 	acceptChan := make(chan net.Conn)
 	go StartAccept(socket, acceptChan)
 
+	closeChan := make(chan bool)
+
+	var waitGroup sync.WaitGroup
+	defer waitGroup.Wait()
+
 	for {
 		select {
 		case conn := <-acceptChan:
-			user := server.NewUser(conn)
-			defer user.Close()
-			room.AddMember(user)
-			defer room.RemoveMember(user)
-			go HandleConnection(room, conn)
+			waitGroup.Add(1)
+			go HandleConnection(room, conn, &waitGroup, closeChan)
 		case <-interruptChan:
+			closeChan <- true
 			return
 		}
 	}
